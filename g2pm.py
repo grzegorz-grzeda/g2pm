@@ -6,10 +6,13 @@ import logging
 import argparse
 import subprocess
 
+PROJECT_FILE = 'project.json'
+
 BUILD_DIR = 'build'
 TEMP_DIR = 'tmp'
 CODE_DIR = 'code'
 TEST_DIR = 'test'
+LIBS_DIR = 'libs'
 SRC_SUBDIR = 'src'
 INC_SUBDIR = 'inc'
 LNK_SUBDIR = 'lnk'
@@ -29,7 +32,7 @@ GITIGNORE_LIST = [
 ]
 
 LIBS_TEMPLATE = {
-    'libs': [
+    LIBS_DIR: [
         {
             "name": "Library name",
             "version": f"Library version (e.g.) {VERSION_LATEST}",
@@ -49,10 +52,6 @@ PROJECT_TEMPLATE = {
     "targets": [
         {
             "arch": "x64",
-            "type": [
-                "build",
-                "test"
-            ],
             "prefix": "",
             "location": "",
             "compile_flags": "",
@@ -60,15 +59,15 @@ PROJECT_TEMPLATE = {
             "link_script": ""
         }
     ],
-    "code": {
-        "inc": [],
-        "src": []
+    CODE_DIR: {
+        INC_SUBDIR: [],
+        SRC_SUBDIR: []
     },
-    "test": {
-        "inc": [],
-        "src": []
+    TEST_DIR: {
+        INC_SUBDIR: [],
+        SRC_SUBDIR: []
     },
-    "libs": []
+    LIBS_DIR: []
 }
 
 
@@ -77,13 +76,13 @@ def get_input_for_template(template):
 
 
 def init():
-    print("Initing")
+    logging.info("Initing")
 
     for entry in PROJECT_TEMPLATE['info']:
         PROJECT_TEMPLATE['info'][entry] = input(
             f"{PROJECT_TEMPLATE['info'][entry]}: ")
 
-    with open('project.json', 'w') as project:
+    with open(PROJECT_FILE, 'w') as project:
         project.write(json.dumps(PROJECT_TEMPLATE, indent=3))
 
     with open('.gitignore', 'w') as gitignore:
@@ -92,7 +91,8 @@ def init():
     with open('Readme.md', 'w') as readme:
         readme.write(f"# {PROJECT_TEMPLATE['info']['description']}\n")
         readme.write(f"## Version {PROJECT_TEMPLATE['info']['version']}\n")
-        readme.write(f"&copy; {PROJECT_TEMPLATE['info']['author']} on {PROJECT_TEMPLATE['info']['licence']} licence\n")
+        readme.write(
+            f"&copy; {PROJECT_TEMPLATE['info']['author']} on {PROJECT_TEMPLATE['info']['licence']} licence\n")
 
     os.makedirs(f"{CODE_DIR}/{SRC_SUBDIR}", exist_ok=True)
     os.makedirs(f"{CODE_DIR}/{INC_SUBDIR}", exist_ok=True)
@@ -103,27 +103,123 @@ def init():
 
 
 def add_lib():
-    print("Adding library")
+    logging.info("Adding library")
+
+
+def install_lib():
+    logging.info("Installing libraries")
+
+    logging.debug(f"Removing {LIBS_DIR}")
+    subprocess.run(['rm -rf', LIBS_DIR])
+
+    # open project.json
+    # read libs
+    # for each lib
+    # - git clone the lib
+    # - git checkout to the specified version
 
 
 def clean():
-    print("Cleaning")
+    logging.info("Cleaning")
 
     for directory in GITIGNORE_LIST:
-        subprocess.call([
+        subprocess.run([
             'rm',
             '-rf',
             directory
         ])
 
 
-def build():
-    print("Building")
+def build(remove_temp=True):
+    try:
+        with open(PROJECT_FILE) as project_file:
+            settings = json.load(project_file)
+            name = settings['info']['name']
+            architectures = settings['targets']
+            includes = settings['code']['inc']
+            sources = settings['code']['src']
+
+            include_dirs = list(set([
+                os.path.join(
+                    CODE_DIR,
+                    INC_SUBDIR,
+                    os.path.dirname(inc)
+                ) for inc in includes
+            ]))
+
+            for architecture in architectures:
+                arch_name = architecture['arch']
+                logging.info(f"Building architecture ({arch_name})")
+                objects = [
+                    (
+                        os.path.join(TEMP_DIR, arch_name, CODE_DIR,
+                                     SRC_SUBDIR, f"{source}.o"),
+                        os.path.join(CODE_DIR, SRC_SUBDIR, source)
+                    ) for source in sources
+                ]
+
+                obj_dirs = list(set([os.path.dirname(obj[0])
+                                     for obj in objects]))
+                for obj_dir in obj_dirs:
+                    logging.debug(f"Creating directory {obj_dir}")
+                    os.makedirs(obj_dir, exist_ok=True)
+
+                # Add compilation of fetched libraries
+
+                for obj in objects:
+                    logging.info(f"Compiling ({arch_name}) {obj[1]}")
+
+                    cc = [GCC]
+
+                    for inc in include_dirs:
+                        cc.append(f'-I{inc}')
+
+                    cc.extend([
+                        '-c',
+                        obj[1],
+                        '-o',
+                        obj[0]
+                    ])
+
+                    logging.debug(f'Executing "{" ".join(cc)}"')
+                    subprocess.run(cc, cwd=os.getcwd(),
+                                   stderr=subprocess.STDOUT)
+
+                cc = [GCC]
+                cc.extend([obj[0] for obj in objects])
+
+                exe_name = os.path.join(BUILD_DIR, arch_name, name)
+                cc.extend(['-o', exe_name])
+
+                logging.info(f"Linking ({arch_name}) {exe_name}")
+                logging.debug(
+                    f"Creating directory {os.path.dirname(exe_name)}")
+                os.makedirs(os.path.dirname(exe_name), exist_ok=True)
+
+                logging.debug(f'Executing "{" ".join(cc)}"')
+                subprocess.run(cc, cwd=os.getcwd(), stderr=subprocess.STDOUT)
+
+            if remove_temp:
+                logging.debug(f'Removing temporaty {TEMP_DIR}/ directory')
+                subprocess.run(['rm', '-rf', TEMP_DIR])
+
+    except FileNotFoundError:
+        logging.error(f"{PROJECT_FILE} does not exist. Initialise the project!")
 
 
 def test():
     clean()
-    build()
+    build()  # build without removing temp dir
+
+    # open project.json and fetch content
+    # compose list of architectures
+    # compose list of test include dirs
+    # compose list of test sources
+    # for each architecure
+    # compile test sources (depending on architecture setting) with build sources
+    # link
+    # run
+    # remowe temp dir
     print("Testing")
 
 
@@ -135,6 +231,8 @@ def parse_args():
     parser.add_argument('action',
                         help='Perform a certain action',
                         choices=get_calls().keys())
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='Increase output verbosity')
     return parser.parse_args()
 
 
@@ -142,6 +240,7 @@ def get_calls():
     return {
         "init": init,
         "add-library": add_lib,
+        "install-libraries": install_lib,
         "clean": clean,
         "build": build,
         "test": test
@@ -154,8 +253,12 @@ def invoke_action(name):
 
 def main():
     """ Main routine """
+    args = parse_args()
 
-    invoke_action(parse_args().action)
+    logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',
+                        level=logging.DEBUG if args.verbose == True else logging.INFO)
+
+    invoke_action(args.action)
 
 
 if __name__ == '__main__':
