@@ -11,8 +11,8 @@ PROJECT_FILE = 'project.json'
 BUILD_DIR = 'build'
 TEMP_DIR = 'tmp'
 CODE_DIR = 'code'
-TEST_DIR = 'test'
 LIBS_DIR = 'libs'
+PLAT_DIR = 'platforms'
 SRC_SUBDIR = 'src'
 INC_SUBDIR = 'inc'
 LNK_SUBDIR = 'lnk'
@@ -49,21 +49,19 @@ PROJECT_TEMPLATE = {
         "author": "Author",
         "licence": "Licence name"
     },
-    "targets": [
+    PLAT_DIR: [
         {
-            "arch": "x64",
-            "prefix": "",
-            "location": "",
+            "name": "x64",
+            "compiler_prefix": "",
+            "compiler_location": "",
             "compile_flags": "",
             "link_flags": "",
-            "link_script": ""
+            LNK_SUBDIR: "",
+            INC_SUBDIR: [],
+            SRC_SUBDIR: []
         }
     ],
     CODE_DIR: {
-        INC_SUBDIR: [],
-        SRC_SUBDIR: []
-    },
-    TEST_DIR: {
         INC_SUBDIR: [],
         SRC_SUBDIR: []
     },
@@ -96,10 +94,12 @@ def init():
 
     os.makedirs(f"{CODE_DIR}/{SRC_SUBDIR}", exist_ok=True)
     os.makedirs(f"{CODE_DIR}/{INC_SUBDIR}", exist_ok=True)
-    os.makedirs(f"{CODE_DIR}/{LNK_SUBDIR}", exist_ok=True)
-    os.makedirs(f"{TEST_DIR}/{SRC_SUBDIR}", exist_ok=True)
-    os.makedirs(f"{TEST_DIR}/{INC_SUBDIR}", exist_ok=True)
-    os.makedirs(f"{TEST_DIR}/{LNK_SUBDIR}", exist_ok=True)
+
+    for platform in PROJECT_TEMPLATE[PLAT_DIR]:
+        os.makedirs(os.path.join(
+            PLAT_DIR, platform['name'], SRC_SUBDIR), exist_ok=True)
+        os.makedirs(os.path.join(
+            PLAT_DIR, platform['name'], INC_SUBDIR), exist_ok=True)
 
 
 def add_lib():
@@ -135,9 +135,9 @@ def build(remove_temp=True):
         with open(PROJECT_FILE) as project_file:
             settings = json.load(project_file)
             name = settings['info']['name']
-            architectures = settings['targets']
-            includes = settings['code']['inc']
-            sources = settings['code']['src']
+            platforms = settings[PLAT_DIR]
+            includes = settings[CODE_DIR][INC_SUBDIR]
+            sources = settings[CODE_DIR][SRC_SUBDIR]
 
             include_dirs = list(set([
                 os.path.join(
@@ -147,16 +147,25 @@ def build(remove_temp=True):
                 ) for inc in includes
             ]))
 
-            for architecture in architectures:
-                arch_name = architecture['arch']
-                logging.info(f"Building architecture ({arch_name})")
+            for platform in platforms:
+                platform_name = platform['name']
+                logging.info(f"Building platform ({platform_name})")
                 objects = [
                     (
-                        os.path.join(TEMP_DIR, arch_name, CODE_DIR,
+                        os.path.join(TEMP_DIR, platform_name, CODE_DIR,
                                      SRC_SUBDIR, f"{source}.o"),
                         os.path.join(CODE_DIR, SRC_SUBDIR, source)
                     ) for source in sources
                 ]
+
+                objects.extend([
+                    (
+                        os.path.join(TEMP_DIR, platform_name,
+                                     PLAT_DIR, SRC_SUBDIR, f"{source}.o"),
+                        os.path.join(PLAT_DIR, platform_name,
+                                     SRC_SUBDIR, source)
+                    ) for source in platform[SRC_SUBDIR]
+                ])
 
                 obj_dirs = list(set([os.path.dirname(obj[0])
                                      for obj in objects]))
@@ -167,7 +176,7 @@ def build(remove_temp=True):
                 # Add compilation of fetched libraries
 
                 for obj in objects:
-                    logging.info(f"Compiling ({arch_name}) {obj[1]}")
+                    logging.info(f"Compiling ({platform_name}) {obj[1]}")
 
                     cc = [GCC]
 
@@ -188,10 +197,10 @@ def build(remove_temp=True):
                 cc = [GCC]
                 cc.extend([obj[0] for obj in objects])
 
-                exe_name = os.path.join(BUILD_DIR, arch_name, name)
+                exe_name = os.path.join(BUILD_DIR, platform_name, name)
                 cc.extend(['-o', exe_name])
 
-                logging.info(f"Linking ({arch_name}) {exe_name}")
+                logging.info(f"Linking ({platform_name}) {exe_name}")
                 logging.debug(
                     f"Creating directory {os.path.dirname(exe_name)}")
                 os.makedirs(os.path.dirname(exe_name), exist_ok=True)
@@ -204,23 +213,8 @@ def build(remove_temp=True):
                 subprocess.run(['rm', '-rf', TEMP_DIR])
 
     except FileNotFoundError:
-        logging.error(f"{PROJECT_FILE} does not exist. Initialise the project!")
-
-
-def test():
-    clean()
-    build()  # build without removing temp dir
-
-    # open project.json and fetch content
-    # compose list of architectures
-    # compose list of test include dirs
-    # compose list of test sources
-    # for each architecure
-    # compile test sources (depending on architecture setting) with build sources
-    # link
-    # run
-    # remowe temp dir
-    print("Testing")
+        logging.error(
+            f"{PROJECT_FILE} does not exist. Initialise the project!")
 
 
 def parse_args():
@@ -242,8 +236,7 @@ def get_calls():
         "add-library": add_lib,
         "install-libraries": install_lib,
         "clean": clean,
-        "build": build,
-        "test": test
+        "build": build
     }
 
 
